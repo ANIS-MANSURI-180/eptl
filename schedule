@@ -1,0 +1,74 @@
+package com.eptl.service;
+
+import com.eptl.entity.A;
+import com.eptl.entity.B;
+import com.eptl.event.UserPasswordEmailEvent;
+import com.eptl.repo.ARepository;
+import com.eptl.repo.BRepository;
+import com.eptl.util.PasswordUtil;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+public class UserSyncService {
+
+    private final ARepository aRepository;
+    private final BRepository bRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final ApplicationEventPublisher publisher;
+
+    public UserSyncService(ARepository aRepository,
+                           BRepository bRepository,
+                           PasswordEncoder passwordEncoder,
+                           ApplicationEventPublisher publisher) {
+        this.aRepository = aRepository;
+        this.bRepository = bRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.publisher = publisher;
+    }
+
+    @Transactional
+    public void syncUsersAtoBAndSendMail() {
+
+        List<A> pendingUsers = aRepository.fetchPendingUsers();
+
+        if (pendingUsers.isEmpty()) {
+            System.out.println("✅ No users found with isRegi=0");
+            return;
+        }
+
+        List<Integer> idsToUpdate = new ArrayList<>();
+
+        for (A aUser : pendingUsers) {
+
+            // ✅ Generate raw password
+            String rawPassword = PasswordUtil.generatePassword(10);
+
+            // ✅ Save to B with encrypted password
+            B bUser = new B();
+            bUser.setName(aUser.getName());
+            bUser.setEmail(aUser.getEmail());
+            bUser.setAddress(aUser.getAddress());
+            bUser.setPassword(passwordEncoder.encode(rawPassword));
+
+            bRepository.save(bUser);
+
+            // ✅ Publish event (email will send AFTER COMMIT)
+            publisher.publishEvent(
+                    new UserPasswordEmailEvent(aUser.getEmail(), aUser.getName(), rawPassword)
+            );
+
+            idsToUpdate.add(aUser.getId());
+        }
+
+        // ✅ Bulk update A
+        aRepository.markUsersAsRegistered(idsToUpdate);
+
+        System.out.println("✅ Sync completed: A -> B & A.isRegi updated");
+    }
+}
