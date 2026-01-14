@@ -72,3 +72,58 @@ public class UserSyncService {
         System.out.println("✅ Sync completed: A -> B & A.isRegi updated");
     }
 }
+
+
+
+
+
+
+  @Transactional
+    @Scheduled(fixedRate = 40000)
+    public void moveUsersFromAToB_Fast() {
+
+        // ✅ Step 1: Fetch pending users from A
+        List<A> pendingUsers = aRepo.fetchPendingUsers();
+
+        if (pendingUsers.isEmpty()) {
+            System.out.println("✅ No pending users in A (isRegi=0)");
+            return;
+        }
+
+        // ✅ Step 2: Fetch all emails already existing in B (fast one query)
+//        Set<String> existingEmails = new HashSet<>(bRepo.fetchAllEmails());
+
+
+        // ✅ Step 3: Convert A -> B (skip duplicate emails)
+        List<B> newUsersToInsert = pendingUsers.stream()
+//                .filter(a -> a.getEmail() != null && !existingEmails.contains(a.getEmail()))
+                .map(a -> {
+                    B b = new B();
+                    b.setName(a.getName());
+                    b.setEmail(a.getEmail());
+                    b.setAddress(a.getAddress());
+                    return b;
+                })
+                .collect(Collectors.toList());
+
+        // ✅ Step 4: Insert all in ONE SHOT ✅ FAST
+        if (!newUsersToInsert.isEmpty()) {
+            bRepo.saveAll(newUsersToInsert);
+        }
+
+        // ✅ Step 5: Mark all moved users as registered in A ✅ FAST
+        List<Integer> ids = pendingUsers.stream()
+                .map(A::getId)
+                .collect(Collectors.toList());
+
+        int updated = aRepo.markUsersAsRegistered(ids);
+
+        System.out.println("✅ Inserted into B: " + newUsersToInsert.size()
+                + " | Updated A isRegi=1 for: " + updated);
+    }
+
+
+# config for batch query
+spring.jpa.properties.hibernate.jdbc.batch_size=10
+spring.jpa.properties.hibernate.order_inserts=true
+spring.jpa.properties.hibernate.order_updates=true
